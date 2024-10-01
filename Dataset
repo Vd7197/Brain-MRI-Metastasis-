@@ -1,0 +1,12 @@
+from google.colab import files
+import zipfile
+
+# Upload the dataset
+uploaded = files.upload()
+
+# Unzip the dataset
+zip_file = 'C:/Users/vatsa/Downloads/Data.zip'
+extract_path = 'C:/Users/vatsa/Downloads/Data'
+
+with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+    zip_ref.extractall(extract_path)
