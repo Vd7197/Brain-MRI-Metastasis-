@@ -1,0 +1,123 @@
+!pip install tensorflow opencv-python-headless streamlit fastapi uvicorn scikit-learn
+!pip install pyngrok
+
+from google.colab import files
+import zipfile
+
+# Upload the dataset
+uploaded = files.upload()
+
+# Unzip the dataset
+zip_file = 'C:/Users/vatsa/Downloads/Data.zip'
+extract_path = 'C:/Users/vatsa/Downloads/Data'
+
+with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+    zip_ref.extractall(extract_path)
+
+# Check the contents
+import os
+os.listdir(extract_path)
+
+
+import cv2
+import numpy as np
+import glob
+import matplotlib.pyplot as plt
+
+def apply_clahe(image):
+    img_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    img_clahe = clahe.apply(img_gray)
+    return img_clahe
+
+# Example of preprocessing
+image_paths = sorted(glob.glob(extract_path + 'images/*.png'))
+processed_images = [apply_clahe(cv2.imread(img)) for img in image_paths]
+
+# Display a sample image before and after CLAHE
+original_image = cv2.imread(image_paths[0])
+processed_image = processed_images[0]
+
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.imshow(cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB))
+plt.title('Original Image')
+plt.subplot(1, 2, 2)
+plt.imshow(processed_image, cmap='gray')
+plt.title('CLAHE Processed Image')
+plt.show()
+
+from sklearn.model_selection import train_test_split
+
+masks = sorted(glob.glob(extract_path + 'masks/*.png'))
+
+X_train, X_test, y_train, y_test = train_test_split(processed_images, masks, test_size=0.2, random_state=42)
+
+
+import tensorflow as tf
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, UpSampling2D, concatenate
+
+# Define U-Net++ model
+def unet_plus_plus(input_shape):
+    inputs = tf.keras.Input(input_shape)
+
+    # Contracting path
+    conv1 = Conv2D(64, (3, 3), activation='relu', padding='same')(inputs)
+    pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = Conv2D(128, (3, 3), activation='relu', padding='same')(pool1)
+    pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    # Expanding path
+    up2 = UpSampling2D(size=(2, 2))(conv2)
+    concat1 = concatenate([conv1, up2], axis=-1)
+    conv3 = Conv2D(64, (3, 3), activation='relu', padding='same')(concat1)
+
+    outputs = Conv2D(1, (1, 1), activation='sigmoid')(conv3)
+
+    return tf.keras.Model(inputs=inputs, outputs=outputs)
+
+# Compile U-Net++
+input_shape = (256, 256, 1)
+model_unetpp = unet_plus_plus(input_shape)
+model_unetpp.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+# Display the model summary
+model_unetpp.summary()
+X_train = np.array([cv2.resize(img, (256, 256)) for img in X_train])
+X_train = np.expand_dims(X_train, axis=-1)
+y_train = np.array([cv2.imread(mask, 0) for mask in y_train])
+y_train = np.expand_dims(y_train, axis=-1)
+
+X_test = np.array([cv2.resize(img, (256, 256)) for img in X_test])
+X_test = np.expand_dims(X_test, axis=-1)
+y_test = np.array([cv2.imread(mask, 0) for mask in y_test])
+y_test = np.expand_dims(y_test, axis=-1)
+
+# Train the model
+model_unetpp.fit(X_train, y_train, epochs=10, batch_size=8, validation_data=(X_test, y_test))
+import tensorflow.keras.backend as K
+
+def dice_coefficient(y_true, y_pred):
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2. * intersection) / (K.sum(y_true_f) + K.sum(y_pred_f))
+
+# Calculate DICE score for validation set
+y_pred = model_unetpp.predict(X_test)
+dice = dice_coefficient(y_test, y_pred)
+print("DICE Score:", dice)
+
+
+
+from pyngrok import ngrok
+import streamlit as st
+
+# Start the ngrok tunnel for Streamlit
+public_url = ngrok.connect(port='8501')
+print(f"Streamlit URL: {public_url}")
+
+# Streamlit code here
+st.title("Brain MRI Metastasis Segmentation")
+# Add your Streamlit app code here
